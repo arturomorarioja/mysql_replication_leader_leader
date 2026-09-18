@@ -1,0 +1,92 @@
+services:
+    node_a:
+        image: mysql:8.4
+        command:
+            - --server-id=1
+            - --log-bin=mysql-bin
+            - --binlog-format=ROW
+            - --gtid-mode=ON
+            - --enforce-gtid-consistency=ON
+            - --log-replica-updates=ON
+            - --auto-increment-increment=2
+            - --auto-increment-offset=1
+        environment:
+            MYSQL_ROOT_PASSWORD: root
+            MYSQL_ROOT_HOST: "%"
+        healthcheck:
+            test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent"]
+            interval: 3s
+            timeout: 3s
+            retries: 30
+            start_period: 20s
+
+    node_b:
+        image: mysql:8.4
+        command:
+            - --server-id=2
+            - --log-bin=mysql-bin
+            - --binlog-format=ROW
+            - --gtid-mode=ON
+            - --enforce-gtid-consistency=ON
+            - --log-replica-updates=ON
+            - --auto-increment-increment=2
+            - --auto-increment-offset=2
+        environment:
+            MYSQL_ROOT_PASSWORD: root
+            MYSQL_ROOT_HOST: "%"
+        healthcheck:
+            test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent"]
+            interval: 3s
+            timeout: 3s
+            retries: 30
+            start_period: 20s
+
+    setup:
+        image: mysql:8.4
+        depends_on:
+            node_a:
+                condition: service_healthy
+            node_b:
+                condition: service_healthy
+        entrypoint: ["/bin/bash", "/setup/configure-replication.sh"]
+        environment:
+            MYSQL_PWD: root
+        volumes:
+            - ./setup/configure-replication.sh:/setup/configure-replication.sh:ro
+            - ./db/01-schema.sql:/setup/01-schema.sql:ro
+
+    phpmyadmin_a:
+        image: phpmyadmin:5.2.3-apache
+        entrypoint:
+            - /bin/bash
+            - -c
+            - |
+              echo "session.name=PHPSESSID_NODE_A" > /usr/local/etc/php/conf.d/session-name.ini
+              exec /docker-entrypoint.sh apache2-foreground
+        ports:
+            - "127.0.0.1:18407:80"
+        environment:
+            PMA_HOST: node_a
+            PMA_VERBOSE: Node A
+            PMA_ABSOLUTE_URI: "http://127.0.0.1:18407/"
+        depends_on:
+            setup:
+                condition: service_completed_successfully
+
+    phpmyadmin_b:
+        image: phpmyadmin:5.2.3-apache
+        entrypoint:
+            - /bin/bash
+            - -c
+            - |
+              echo "session.name=PHPSESSID_NODE_B" > /usr/local/etc/php/conf.d/session-name.ini
+              exec /docker-entrypoint.sh apache2-foreground
+        ports:
+            - "127.0.0.2:18408:80"
+        environment:
+            PMA_HOST: node_b
+            PMA_VERBOSE: Node B
+            PMA_ABSOLUTE_URI: "http://127.0.0.2:18408/"
+        depends_on:
+            setup:
+                condition: service_completed_successfully
